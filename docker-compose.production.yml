@@ -1,0 +1,68 @@
+name: app-backend-production
+
+x-common-environment: &common-environment
+  ASPNETCORE_ENVIRONMENT: Production
+  ASPNETCORE_HTTP_PORTS: 8080
+  ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+  Cors__AllowedOrigins__0: ${WEB_ORIGIN:?WEB_ORIGIN must be set}
+  Database__ApplyMigrations: "false"
+  HttpsRedirection__Enabled: "false"
+  Jwt__Issuer: ${JWT_ISSUER:-App.Api}
+  Jwt__Audience: ${JWT_AUDIENCE:-App.Web}
+  Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
+  Jwt__ExpirationMinutes: ${JWT_EXPIRATION_MINUTES:-60}
+  InitialAdmin__Enabled: ${INITIAL_ADMIN_ENABLED:-false}
+  InitialAdmin__Email: ${INITIAL_ADMIN_EMAIL:-}
+  InitialAdmin__Password: ${INITIAL_ADMIN_PASSWORD:-}
+  InitialAdmin__FirstName: ${INITIAL_ADMIN_FIRST_NAME:-Admin}
+  InitialAdmin__LastName: ${INITIAL_ADMIN_LAST_NAME:-Admin}
+  Gemini__ApiKey: ${GEMINI_API_KEY:-}
+  Gemini__Model: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+  Gemini__TimeoutSeconds: ${GEMINI_TIMEOUT_SECONDS:-25}
+
+x-container-hardening: &container-hardening
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  volumes:
+    - ${RDS_CA_CERT_PATH:?RDS_CA_CERT_PATH must be set}:/app/certs/rds-global-bundle.pem:ro
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  migrate:
+    <<: *container-hardening
+    image: app-backend:${APP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/App.Api/Dockerfile
+    environment:
+      <<: *common-environment
+      ConnectionStrings__PostgreSQL: ${MIGRATION_DB_CONNECTION_STRING:?MIGRATION_DB_CONNECTION_STRING must be set}
+      Database__MigrateOnly: "true"
+    restart: "no"
+
+  api:
+    <<: *container-hardening
+    image: app-backend:${APP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/App.Api/Dockerfile
+    environment:
+      <<: *common-environment
+      ConnectionStrings__PostgreSQL: ${APP_DB_CONNECTION_STRING:?APP_DB_CONNECTION_STRING must be set}
+      Database__MigrateOnly: "false"
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 30s
